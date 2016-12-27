@@ -79,7 +79,7 @@ def test_streaming(exp_db, tmp_dir, start_uid1):
                 break
 
             new_event = dict(uid=str(uuid4()), time=time(), timestamps={},
-                             descriptor=new_descriptor,
+                             descriptor=new_descriptor['uid'],
                              data={'img': results},
                              seq_num=i)
             yield 'event', new_event
@@ -98,6 +98,7 @@ def test_streaming(exp_db, tmp_dir, start_uid1):
             assert doc['parents'] == input_hdr['start']['uid']
         if name == 'event':
             assert isinstance(doc['data']['img'], np.ndarray)
+        pprint(doc)
     pprint(exp_db[-1])
     for ev1, ev2 in zip(exp_db.get_events(input_hdr, fill=True),
                         exp_db.get_events(exp_db[-1], fill=True)):
@@ -147,7 +148,7 @@ def test_double_streaming(exp_db, tmp_dir, start_uid1):
                 break
 
             new_event = dict(uid=str(uuid4()), time=time(), timestamps={},
-                             descriptor=new_descriptor,
+                             descriptor=new_descriptor['uid'],
                              data={'pe1_image': results},
                              seq_num=i)
             yield 'event', new_event
@@ -164,6 +165,7 @@ def test_double_streaming(exp_db, tmp_dir, start_uid1):
     for name, doc in sample_f(sample_f(a)):
         if name == 'event':
             assert isinstance(doc['data']['pe1_image'], np.ndarray)
+        pprint(doc)
     pprint(exp_db[-1])
     for ev1, ev2 in zip(exp_db.get_events(input_hdr, fill=True),
                         exp_db.get_events(exp_db[-1], fill=True)):
@@ -207,7 +209,7 @@ def test_collection(exp_db, start_uid1):
                 break
             if results is not None:
                 new_event = dict(uid=str(uuid4()), time=time(), timestamps={},
-                                 descriptor=new_descriptor,
+                                 descriptor=new_descriptor['uid'],
                                  data=results,
                                  seq_num=i)
                 yield 'event', new_event
@@ -278,7 +280,7 @@ def test_combine(exp_db, start_uid1, start_uid2):
                 if results is not None:
                     new_event = dict(uid=str(uuid4()), time=time(),
                                      timestamps={},
-                                     descriptor=new_descriptor,
+                                     descriptor=new_descriptor['uid'],
                                      data=results,
                                      seq_num=i)
                     yield 'event', new_event
