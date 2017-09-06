@@ -1073,6 +1073,7 @@ class BundleSingleStream(EventStream):
     def __init__(self, child, control, predicate_against=('start', 'stop'),
                  **kwargs):
         self.predicate_against = predicate_against
+        self.control = control
         if isinstance(control, int):
             EventStream.__init__(self, child=child)
             self.n_hdrs = control
@@ -1091,7 +1092,7 @@ class BundleSingleStream(EventStream):
         self.predicate_docs = dict()
         for name in predicate_against:
             self.predicate_docs[name] = deque(maxlen=2)
-            self.predicate_docs[name] = None
+            self.predicate_docs[name].append(None)
 
         self.issue_stop = False
 
@@ -1107,76 +1108,51 @@ class BundleSingleStream(EventStream):
         # else, these are the streams we want to bundle on
         else:
             # first check for predicate
-            if name in predicate_against:
-                self.predicate_docs[name].append(name)
+            if name in self.predicate_against:
+                self.predicate_docs[name].append(doc)
                 # check if it's the first doc issued and if meets predicate
-                if self.emitted[name] == 0 and \
-                    self.predicate(*self.predicate_docs[name]):
+                if self.predicate(*self.predicate_docs[name]):
                     # this will remain True until cleared
                     self.issue_stop = True
 
             # Next make documents needed for this run
             # Stash the start header in case we issue a stop on the first one
             if name == 'start':
+                # upon first start, issue a start
                 if self.emitted[name] == 0:
                     return_values.append(self.start((doc,)))
+                    self.emitted[name] += 1
+                    self.parent_uids = []
                 # after if statement to override parent_uids from self.start
-                self.parent_uids = [doc['uid']]
+                self.parent_uids.append(doc['uid'])
             elif name == 'stop':
+                # only issue stop when requested
                 if self.issue_stop:
-                    self.stop((doc,))
+                    return_values.append(self.stop((doc,)))
+                    self.emitted[name] += 1
+                    self._clear_state()
             elif name == 'descriptor':
                 # only take first descriptor
                 # TODO : add to doc if more than one descriptor?
                 if self.emitted[name] == 0:
                     self.outbound_descriptor_uid = doc['uid']
                     return_values.append(self.descriptor((doc,)))
+                    self.emitted[name] += 1
             elif name == 'event':
-                pass
-
-
-            # if a start doc
-            if (name == 'start' and
-                # and we haven't emitted one
-                    self.emitted.get(name, False) and
-                # and to test the cond.
-                    name in self.predicate_against and
-                # and it satisfies the condition
-                    self.predicate(docs)):
-                # Reset the state
-                for k in self.emitted:
-                    self.emitted[k] = False
-                self.start_count = 0
-                self.start_docs = None
-                # Issue a stop
-                return_values.append(super().stop(docs))
-            # If we have emitted that kind of document
-            if self.emitted.get(name, False):
-                # If start stash the parent uids and increment the count
-                if name == 'start':
-                    self.parent_uids.extend([doc['uid'] for doc in docs])
-                    self.start_count += 1
-            elif name != 'stop':
-                # If not a stop emit it
-                return_values.append(getattr(self, name)(docs))
-                if name == 'start':
-                    self.emitted[x[0]] = True
-                    self.start_count += 1
-                elif name == 'descriptor':
-                    self.emitted[x[0]] = True
-            elif (name in self.predicate_against and
-                  (self.predicate(docs) or self.predicate(self.start_docs))
-                  ):
-                # Reset the state
-                for k in self.emitted:
-                    self.emitted[k] = False
-                self.start_count = 0
-                self.start_docs = None
-                # Issue a stop
-                return_values.append(super().stop(docs))
+                return_values.append(self.event((doc,)))
+                self.emitted[name] += 1
 
         return [self.emit(r) for r in return_values]
 
+    def event(self, docs):
+        # Need input on if this is right way. need to update d
+        # descriptor uid and in the process need new timestamp and uid
+        newdocs = list()
+        for doc in docs:
+            newdoc = self.refresh_event(doc)
+            newdoc['descriptor'] = self.outbound_descriptor_uid
+            newdocs.append(newdoc)
+        return 'event', newdocs
 
     def _clear_state(self):
         # Reset the state
