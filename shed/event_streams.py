@@ -1088,7 +1088,7 @@ class BundleSingleStream(EventStream):
             self.predicate = lambda x, x2: self.start_count == self.n_hdrs
 
         self.generate_provenance()
-        self.emitted = {'start': 0, 'descriptor': 0, 'event' : 0, 'stop' : 0}
+        self.emitted = {'start': 0, 'descriptor': 0, 'event': 0, 'stop': 0}
         self.predicate_docs = dict()
         for name in predicate_against:
             self.predicate_docs[name] = deque(maxlen=2)
