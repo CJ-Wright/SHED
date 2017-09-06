@@ -1073,17 +1073,10 @@ class BundleSingleStream(EventStream):
     def __init__(self, child, control, predicate_against=('start', 'stop'),
                  **kwargs):
         self.predicate_against = predicate_against
-        self.maxsize = kwargs.pop('maxsize', 100)
-        self.buffers = []
-        self.desc_start_map = {}
-        self.condition = Condition()
-        self.prior = ()
-        self.control = control
-        self.start_count = 0
         if isinstance(control, int):
             EventStream.__init__(self, child=child)
             self.n_hdrs = control
-            self.predicate = lambda x: self.start_count == self.n_hdrs
+            self.predicate = lambda x, x2: self.start_count == self.n_hdrs
         elif callable(control):
             EventStream.__init__(self, child=child)
             self.n_hdrs = None
@@ -1091,21 +1084,57 @@ class BundleSingleStream(EventStream):
         else:
             EventStream.__init__(self, children=(child, control))
             self.n_hdrs = None
-            self.predicate = lambda x: self.start_count == self.n_hdrs
+            self.predicate = lambda x, x2: self.start_count == self.n_hdrs
+
         self.generate_provenance()
-        self.emitted = {'start': False, 'descriptor': False}
-        self.start_docs = None
+        self.emitted = {'start': 0, 'descriptor': 0, 'event' : 0, 'stop' : 0}
+        self.predicate_docs = dict()
+        for name in predicate_against:
+            self.predicate_docs[name] = deque(maxlen=2)
+            self.predicate_docs[name] = None
+
+        self.issue_stop = False
 
     def update(self, x, who=None):
         return_values = []
         name, docs = self.curate_streams(x, False)
+        # only accepts first doc
+        doc = docs[0]
+        # are we in control stream? if yes, grab n_hdrs
         if who == self.control:
             if name == 'start':
-                self.n_hdrs = x[1]['n_hdrs']
+                self.n_hdrs = doc['n_hdrs']
+        # else, these are the streams we want to bundle on
         else:
+            # first check for predicate
+            if name in predicate_against:
+                self.predicate_docs[name].append(name)
+                # check if it's the first doc issued and if meets predicate
+                if self.emitted[name] == 0 and \
+                    self.predicate(*self.predicate_docs[name]):
+                    # this will remain True until cleared
+                    self.issue_stop = True
+
+            # Next make documents needed for this run
             # Stash the start header in case we issue a stop on the first one
             if name == 'start':
-                self.start_docs = docs
+                if self.emitted[name] == 0:
+                    return_values.append(self.start((doc,)))
+                # after if statement to override parent_uids from self.start
+                self.parent_uids = [doc['uid']]
+            elif name == 'stop':
+                if self.issue_stop:
+                    self.stop((doc,))
+            elif name == 'descriptor':
+                # only take first descriptor
+                # TODO : add to doc if more than one descriptor?
+                if self.emitted[name] == 0:
+                    self.outbound_descriptor_uid = doc['uid']
+                    return_values.append(self.descriptor((doc,)))
+            elif name == 'event':
+                pass
+
+
             # if a start doc
             if (name == 'start' and
                 # and we haven't emitted one
@@ -1147,6 +1176,15 @@ class BundleSingleStream(EventStream):
                 return_values.append(super().stop(docs))
 
         return [self.emit(r) for r in return_values]
+
+
+    def _clear_state(self):
+        # Reset the state
+        for k in self.emitted:
+            self.emitted[k] = 0
+        self.issue_stop = False
+        # don't clear self.predicate_docs since it should be handled in
+        # predicate's logic
 
 
 class combine_latest(EventStream):
