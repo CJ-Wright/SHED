@@ -1102,7 +1102,6 @@ class BundleSingleStream(EventStream):
                  **kwargs):
         self.predicate_against = predicate_against
         self.control = control
-        self.start_count = 0
         if isinstance(control, int):
             EventStream.__init__(self, child=child)
             self.n_hdrs = control
@@ -1117,13 +1116,18 @@ class BundleSingleStream(EventStream):
             self.predicate = lambda x, x2: self.start_count == self.n_hdrs
 
         self.generate_provenance()
-        self.emitted = {'start': 0, 'descriptor': 0, 'event': 0, 'stop': 0}
+        # counts of each document seen
+        self.counts = {'start': 0, 'descriptor': 0, 'event': 0, 'stop': 0}
         self.predicate_docs = dict()
         for name in predicate_against:
             self.predicate_docs[name] = deque(maxlen=2)
             self.predicate_docs[name].append(None)
 
         self.issue_stop = False
+
+    @property
+    def start_count(self):
+        return self.counts['start']
 
     def update(self, x, who=None):
         return_values = []
@@ -1149,9 +1153,8 @@ class BundleSingleStream(EventStream):
             if name == 'start':
                 self.start_count = self.start_count + 1
                 # upon first start, issue a start
-                if self.emitted[name] == 0:
+                if self.counts[name] == 0:
                     return_values.append(self.start((doc,)))
-                    self.emitted[name] += 1
                     self.parent_uids = []
                 # after if statement to override parent_uids from self.start
                 self.parent_uids.append(doc['uid'])
@@ -1159,17 +1162,17 @@ class BundleSingleStream(EventStream):
                 # only issue stop when requested
                 if self.issue_stop:
                     return_values.append(self.stop((doc,)))
-                    self.emitted[name] += 1
                     self._clear_state()
             elif name == 'descriptor':
                 # only take first descriptor
-                if self.emitted[name] == 0:
+                if self.counts[name] == 0:
                     self.outbound_descriptor_uid = doc['uid']
                     return_values.append(self.descriptor((doc,)))
-                    self.emitted[name] += 1
+                    self.counts[name] += 1
             elif name == 'event':
                 return_values.append(self.event((doc,)))
-                self.emitted[name] += 1
+                self.counts[name] += 1
+            self.counts[name] += 1
 
         return [self.emit(r) for r in return_values]
 
@@ -1185,8 +1188,8 @@ class BundleSingleStream(EventStream):
 
     def _clear_state(self):
         # Reset the state
-        for k in self.emitted:
-            self.emitted[k] = 0
+        for k in self.counts:
+            self.counts[k] = 0
         self.issue_stop = False
         self.start_count = 0
         # don't clear self.predicate_docs since it should be handled in
