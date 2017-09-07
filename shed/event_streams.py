@@ -1151,7 +1151,6 @@ class BundleSingleStream(EventStream):
             # Next make documents needed for this run
             # Stash the start header in case we issue a stop on the first one
             if name == 'start':
-                self.start_count = self.start_count + 1
                 # upon first start, issue a start
                 if self.counts[name] == 0:
                     return_values.append(self.start((doc,)))
@@ -1172,6 +1171,7 @@ class BundleSingleStream(EventStream):
             elif name == 'event':
                 return_values.append(self.event((doc,)))
                 self.counts[name] += 1
+            # keep track of which documents have been seen
             self.counts[name] += 1
 
         return [self.emit(r) for r in return_values]
