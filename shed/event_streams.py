@@ -1036,14 +1036,19 @@ class BundleSingleStream(EventStream):
     ----------
     child: EventStream instances
         The event stream containing the data to be zipped together
-    control_stream: {EventStream, int, callable}
+    control: EventStream or int or callable
         Information to control the buffering. If int, bundle that many
-        header together. If an EventStream, pull from the start document
+        headers together. If an EventStream, pull from the start document
         ``n_hdrs`` to determine the number of headers to bundle. If callable,
         run predicate on both start and stop (note that one should use
-        ``dict.get(key, False)`` so as not to ``KeyError`` when desiginging
-        the predicate). If the predicate is True then the stop is issued
+        ``dict.get(key, False)`` so as not to ``KeyError`` when designing
+        the predicate). If the predicate is True, then the stop is issued
         and a new stream of events (with its own start) is generated.
+        As a function, the control must be a function of two arguments
+        such as:
+        ``def control(prevdoc, curdoc):``
+        where ``prevdoc`` is the previous instance of that type of document and
+        ``curdoc`` is the current instance.
     predicate_against: {('start', stop'), 'start', 'stop}, optional
         Which documents to run the predicate against.
         Defaults to ``('start', 'stop')``. Note that the ``start``
@@ -1054,6 +1059,7 @@ class BundleSingleStream(EventStream):
 
     Examples
     --------
+    # to bundle two events together
     >>> from shed.utils import to_event_model
     >>> from streamz import Stream
     >>> import shed.event_streams as es
@@ -1068,8 +1074,30 @@ class BundleSingleStream(EventStream):
     >>> for doc1 in g: zz = source.emit(doc1)
     >>> for doc2 in gg: z = source.emit(doc2)
     >>> assert len(L) == 9
-    """
 
+    # bundle events whose previous 'name' attributes match
+    >>> from shed.utils import to_event_model
+    >>> from streamz import Stream
+    >>> import shed.event_streams as es
+    >>> a = [1, 2, 3]  # base data
+    >>> b = [4, 5, 6]
+    >>> g1 = to_event_model(a, [('det', {'dtype': 'float'})],
+    ...                    md=dict(name="foo")
+    >>> g2 = to_event_model(a, [('det', {'dtype': 'float'})],
+    ...                    md=dict(name="foo")
+    >>> g3 = to_event_model(b, [('det', {'dtype': 'float'})],
+    ...                     md=dict(name="bar")
+    >>> def control(prevstart, nextstart):
+    ...     return prevstart['name'] == nextstart['name']
+    >>> source = Stream()
+    >>> m = es.BundleSingleStream(source, control, 'start')
+    >>> l = m.sink(print)
+    >>> L = m.sink_to_list()
+    >>> for doc in g1: z = source.emit(doc)
+    >>> for doc in g2: z = source.emit(doc)
+    >>> for doc in g3: z = source.emit(doc)
+    >>> assert len(L) == 12
+    """
     def __init__(self, child, control, predicate_against=('start', 'stop'),
                  **kwargs):
         self.predicate_against = predicate_against
@@ -1133,7 +1161,6 @@ class BundleSingleStream(EventStream):
                     self._clear_state()
             elif name == 'descriptor':
                 # only take first descriptor
-                # TODO : add to doc if more than one descriptor?
                 if self.emitted[name] == 0:
                     self.outbound_descriptor_uid = doc['uid']
                     return_values.append(self.descriptor((doc,)))
