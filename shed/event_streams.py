@@ -1102,6 +1102,7 @@ class BundleSingleStream(EventStream):
                  **kwargs):
         self.predicate_against = predicate_against
         self.control = control
+        self.start_count = 0
         if isinstance(control, int):
             EventStream.__init__(self, child=child)
             self.n_hdrs = control
@@ -1146,6 +1147,7 @@ class BundleSingleStream(EventStream):
             # Next make documents needed for this run
             # Stash the start header in case we issue a stop on the first one
             if name == 'start':
+                self.start_count = self.start_count + 1
                 # upon first start, issue a start
                 if self.emitted[name] == 0:
                     return_values.append(self.start((doc,)))
@@ -1186,6 +1188,7 @@ class BundleSingleStream(EventStream):
         for k in self.emitted:
             self.emitted[k] = 0
         self.issue_stop = False
+        self.start_count = 0
         # don't clear self.predicate_docs since it should be handled in
         # predicate's logic
 
