@@ -1191,7 +1191,6 @@ class BundleSingleStream(EventStream):
         for k in self.counts:
             self.counts[k] = 0
         self.issue_stop = False
-        self.start_count = 0
         # don't clear self.predicate_docs since it should be handled in
         # predicate's logic
 
