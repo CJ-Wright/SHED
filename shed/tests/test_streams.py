@@ -15,7 +15,7 @@
 from numpy.testing import assert_allclose, assert_equal, assert_raises
 from streamz.core import Stream
 
-import shed.event_streams as es
+from .. import event_streams as es
 from ..event_streams import dstar, star
 import pytest
 from bluesky.callbacks.core import CallbackBase
@@ -1612,7 +1612,7 @@ def test_bundle_single_stream_callable_control(exp_db, start_uid3):
     source = Stream()
 
     dpf = es.BundleSingleStream(source,
-                                lambda x: x[0].get('uid', None) == start_uid3)
+                                lambda n, d: d.get('uid', None) == start_uid3)
 
     L = dpf.sink_to_list()
     dpf.sink(print)
@@ -1632,12 +1632,13 @@ def test_bundle_single_stream_callable_control(exp_db, start_uid3):
 
 
 def test_bundle_single_stream_callable_control2():
+    # NOTE : data is generated here
     from ..utils import to_event_model
 
     source = Stream()
 
     dpf = es.BundleSingleStream(source,
-                                lambda x: x[0].get('stitch_with_previous',
+                                lambda n, d: d.get('stitch_with_previous',
                                                    False) is False,
                                 predicate_against='start')
 
@@ -1656,7 +1657,10 @@ def test_bundle_single_stream_callable_control2():
 
     assert_docs = set()
     n_stops = 0
-    assert len(L) == ((1 + 1) + 3 * 3 + 1) + 3 + 2
+    # start, desc, 9 events, stop
+    # start, desc, 3 events, stop
+    # 18 events total
+    assert len(L) == 18
     for l in L:
         assert_docs.add(l[0])
         assert l[0]
@@ -1665,7 +1669,8 @@ def test_bundle_single_stream_callable_control2():
             assert l[1]['exit_status'] == 'success'
     for n in ['start', 'descriptor', 'event', 'stop']:
         assert n in assert_docs
-    assert n_stops == 1
+    # should have been two stops
+    assert n_stops == 2
 
 
 def test_workflow(exp_db, start_uid1):

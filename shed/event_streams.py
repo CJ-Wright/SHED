@@ -1036,14 +1036,19 @@ class BundleSingleStream(EventStream):
     ----------
     child: EventStream instances
         The event stream containing the data to be zipped together
-    control_stream: {EventStream, int, callable}
+    control: EventStream or int or callable
         Information to control the buffering. If int, bundle that many
-        header together. If an EventStream, pull from the start document
+        headers together. If an EventStream, pull from the start document
         ``n_hdrs`` to determine the number of headers to bundle. If callable,
         run predicate on both start and stop (note that one should use
-        ``dict.get(key, False)`` so as not to ``KeyError`` when desiginging
-        the predicate). If the predicate is True then the stop is issued
+        ``dict.get(key, False)`` so as not to ``KeyError`` when designing
+        the predicate). If the predicate is True, then the stop is issued
         and a new stream of events (with its own start) is generated.
+        As a function, the control must be a function of two arguments
+        such as:
+        ``def control(prevdoc, curdoc):``
+        where ``prevdoc`` is the previous instance of that type of document and
+        ``curdoc`` is the current instance.
     predicate_against: {('start', stop'), 'start', 'stop}, optional
         Which documents to run the predicate against.
         Defaults to ``('start', 'stop')``. Note that the ``start``
@@ -1054,6 +1059,7 @@ class BundleSingleStream(EventStream):
 
     Examples
     --------
+    # to bundle two events together
     >>> from shed.utils import to_event_model
     >>> from streamz import Stream
     >>> import shed.event_streams as es
@@ -1068,22 +1074,41 @@ class BundleSingleStream(EventStream):
     >>> for doc1 in g: zz = source.emit(doc1)
     >>> for doc2 in gg: z = source.emit(doc2)
     >>> assert len(L) == 9
-    """
 
+    # bundle events whose previous 'name' attributes match
+    >>> from shed.utils import to_event_model
+    >>> from streamz import Stream
+    >>> import shed.event_streams as es
+    >>> a = [1, 2, 3]  # base data
+    >>> b = [4, 5, 6]
+    >>> g1 = to_event_model(a, [('det', {'dtype': 'float'})],
+    ...                    md=dict(name="foo")
+    >>> g2 = to_event_model(a, [('det', {'dtype': 'float'})],
+    ...                    md=dict(name="foo")
+    >>> g3 = to_event_model(b, [('det', {'dtype': 'float'})],
+    ...                     md=dict(name="bar")
+    >>> def control(prevstart, nextstart):
+    ...     return prevstart['name'] == nextstart['name']
+    >>> source = Stream()
+    >>> m = es.BundleSingleStream(source, control, 'start')
+    >>> l = m.sink(print)
+    >>> L = m.sink_to_list()
+    >>> for doc in g1: z = source.emit(doc)
+    >>> for doc in g2: z = source.emit(doc)
+    >>> for doc in g3: z = source.emit(doc)
+    >>> assert len(L) == 12
+    """
     def __init__(self, child, control, predicate_against=('start', 'stop'),
                  **kwargs):
+        # needed if a list not supplied, assume can only be str or list/tuple
+        if isinstance(predicate_against, str):
+            predicate_against = [predicate_against]
         self.predicate_against = predicate_against
-        self.maxsize = kwargs.pop('maxsize', 100)
-        self.buffers = []
-        self.desc_start_map = {}
-        self.condition = Condition()
-        self.prior = ()
         self.control = control
-        self.start_count = 0
         if isinstance(control, int):
             EventStream.__init__(self, child=child)
             self.n_hdrs = control
-            self.predicate = lambda x: self.start_count == self.n_hdrs
+            self.predicate = lambda x, x2: self.start_count == self.n_hdrs
         elif callable(control):
             EventStream.__init__(self, child=child)
             self.n_hdrs = None
@@ -1091,62 +1116,86 @@ class BundleSingleStream(EventStream):
         else:
             EventStream.__init__(self, children=(child, control))
             self.n_hdrs = None
-            self.predicate = lambda x: self.start_count == self.n_hdrs
+            self.predicate = lambda x, x2: self.start_count == self.n_hdrs
+
         self.generate_provenance()
-        self.emitted = {'start': False, 'descriptor': False}
-        self.start_docs = None
+        # counts of each document seen
+        self.counts = {'start': 0, 'descriptor': 0, 'event': 0, 'stop': 0}
+        self.predicate_docs = dict()
+        for name in predicate_against:
+            self.predicate_docs[name] = deque(maxlen=2)
+            self.predicate_docs[name].append(None)
+
+        self.issue_stop = False
+
+    @property
+    def start_count(self):
+        return self.counts['start']
 
     def update(self, x, who=None):
         return_values = []
         name, docs = self.curate_streams(x, False)
+        # only accepts first doc
+        doc = docs[0]
+        # are we in control stream? if yes, grab n_hdrs
         if who == self.control:
             if name == 'start':
-                self.n_hdrs = x[1]['n_hdrs']
+                self.n_hdrs = doc['n_hdrs']
+        # else, these are the streams we want to bundle on
         else:
+            # first check for predicate
+            if name in self.predicate_against:
+                self.predicate_docs[name].append(doc)
+                # check if it's the first doc issued and if meets predicate
+                if self.predicate(*self.predicate_docs[name]):
+                    # this will remain True until cleared
+                    self.issue_stop = True
+
+            # Next make documents needed for this run
             # Stash the start header in case we issue a stop on the first one
             if name == 'start':
-                self.start_docs = docs
-            # if a start doc
-            if (name == 'start' and
-                # and we haven't emitted one
-                    self.emitted.get(name, False) and
-                # and to test the cond.
-                    name in self.predicate_against and
-                # and it satisfies the condition
-                    self.predicate(docs)):
-                # Reset the state
-                for k in self.emitted:
-                    self.emitted[k] = False
-                self.start_count = 0
-                self.start_docs = None
-                # Issue a stop
-                return_values.append(super().stop(docs))
-            # If we have emitted that kind of document
-            if self.emitted.get(name, False):
-                # If start stash the parent uids and increment the count
-                if name == 'start':
-                    self.parent_uids.extend([doc['uid'] for doc in docs])
-                    self.start_count += 1
-            elif name != 'stop':
-                # If not a stop emit it
-                return_values.append(getattr(self, name)(docs))
-                if name == 'start':
-                    self.emitted[x[0]] = True
-                    self.start_count += 1
-                elif name == 'descriptor':
-                    self.emitted[x[0]] = True
-            elif (name in self.predicate_against and
-                  (self.predicate(docs) or self.predicate(self.start_docs))
-                  ):
-                # Reset the state
-                for k in self.emitted:
-                    self.emitted[k] = False
-                self.start_count = 0
-                self.start_docs = None
-                # Issue a stop
-                return_values.append(super().stop(docs))
+                # upon first start, issue a start
+                if self.counts[name] == 0:
+                    return_values.append(self.start((doc,)))
+                    self.parent_uids = []
+                # after if statement to override parent_uids from self.start
+                self.parent_uids.append(doc['uid'])
+            elif name == 'stop':
+                # only issue stop when requested
+                if self.issue_stop:
+                    return_values.append(self.stop((doc,)))
+                    self._clear_state()
+            elif name == 'descriptor':
+                # only take first descriptor
+                if self.counts[name] == 0:
+                    self.outbound_descriptor_uid = doc['uid']
+                    return_values.append(self.descriptor((doc,)))
+                    self.counts[name] += 1
+            elif name == 'event':
+                return_values.append(self.event((doc,)))
+                self.counts[name] += 1
+            # keep track of which documents have been seen
+            self.counts[name] += 1
 
         return [self.emit(r) for r in return_values]
+
+    def event(self, docs):
+        # Need input on if this is right way. need to update d
+        # descriptor uid and in the process need new timestamp and uid
+        newdocs = list()
+        for doc in docs:
+            newdoc = self.refresh_event(doc)
+            newdoc['descriptor'] = self.outbound_descriptor_uid
+            newdocs.append(newdoc)
+        return 'event', newdocs
+
+    def _clear_state(self):
+        # Reset the state
+        for k in self.counts:
+            self.counts[k] = 0
+        self.issue_stop = False
+        # don't clear self.predicate_docs since it should be handled in
+        # predicate's logic
 
 
 class combine_latest(EventStream):
