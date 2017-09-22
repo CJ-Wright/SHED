@@ -1100,6 +1100,9 @@ class BundleSingleStream(EventStream):
     """
     def __init__(self, child, control, predicate_against=('start', 'stop'),
                  **kwargs):
+        # needed if a list not supplied, assume can only be str or list/tuple
+        if isinstance(predicate_against, str):
+            predicate_against = [predicate_against]
         self.predicate_against = predicate_against
         self.control = control
         if isinstance(control, int):
