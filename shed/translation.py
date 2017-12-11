@@ -24,7 +24,7 @@ def walk_up(node, graph, prior_node=None):
             return
         else:
             graph.add_edge(t, tt)
-            if isinstance(node, FromEventModel):
+            if isinstance(node, FromEventStream):
                 return
 
     for node2 in node.upstreams:
@@ -33,7 +33,7 @@ def walk_up(node, graph, prior_node=None):
             walk_up(node2, graph, node)
 
 
-class FromEventModel(Stream):
+class FromEventStream(Stream):
     def __init__(self, upstream, doc_type, data_address, event_stream_name=ALL,
                  stream_name=None, principle=False):
         Stream.__init__(self, upstream, stream_name=stream_name)
@@ -74,7 +74,7 @@ class FromEventModel(Stream):
             return self._emit(inner)
 
 
-class ToEventModel(Stream):
+class ToEventStream(Stream):
     def __init__(self, upstream, data_keys, stream_name=None, **kwargs):
         Stream.__init__(self, upstream, stream_name=stream_name)
         self.index_dict = dict()
@@ -92,7 +92,7 @@ class ToEventModel(Stream):
 
         self.translation_nodes = {k: n['stream'] for k, n in
                                   self.graph.node.items()
-                                  if isinstance(n['stream'], FromEventModel)}
+                                  if isinstance(n['stream'], FromEventStream)}
         self.principle_nodes = [n for n in self.translation_nodes.values()
                                 if n.principle is True]
         for p in self.principle_nodes:
