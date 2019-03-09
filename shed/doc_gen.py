@@ -35,9 +35,12 @@ class CreateDocs(object):
         self.stop_factory = None
         self.ev_fac = None
         self.evp_fac = None
+        self.scan_id = 0
 
     def start_doc(self, x):
-        bundle = compose_run(metadata=self.md)
+        self.scan_id += 1
+        self.md.update(scan_id=self.scan_id)
+        bundle = compose_run(metadata=self.md, validate=False)
         new_start_doc, self.desc_fac, self.resc_fac, self.stop_factory = bundle
         self.start_uid = new_start_doc["uid"]
         return new_start_doc
